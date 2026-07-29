@@ -3,6 +3,7 @@ import os
 
 import pytest
 
+from nonebot_plugin_cs2radar import renderer
 from nonebot_plugin_cs2radar import llm, plugin_config
 from nonebot_plugin_cs2radar.binding_store import BindingStore
 from nonebot_plugin_cs2radar.config import Config
@@ -85,6 +86,23 @@ def test_csp_disables_script_and_network_connections() -> None:
     assert "script-src 'none'" in html
     assert "connect-src 'none'" in html
     assert "127.0.0.1" not in html
+
+
+@pytest.mark.asyncio
+async def test_renderer_sets_wmpvp_referer(monkeypatch) -> None:
+    captured = {}
+
+    async def fake_html_to_pic(**kwargs):
+        captured.update(kwargs)
+        return b"image"
+
+    monkeypatch.setattr(renderer, "html_to_pic", fake_html_to_pic)
+    result = await renderer._secure_html_to_pic("<html></html>", width=640)
+
+    assert result == b"image"
+    assert captured["extra_http_headers"] == {
+        "Referer": "https://www.wmpvp.com/"
+    }
 
 
 def test_pw_session_is_memory_only_by_default(tmp_path) -> None:

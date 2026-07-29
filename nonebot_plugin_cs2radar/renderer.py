@@ -11,6 +11,7 @@ from nonebot_plugin_htmlrender import html_to_pic
 from .security import inject_csp, safe_image_url
 
 TEMPLATE_PATH = Path(__file__).parent / "templates"
+WMPVP_REFERER = "https://www.wmpvp.com/"
 env = Environment(
     loader=FileSystemLoader(TEMPLATE_PATH),
     autoescape=select_autoescape(enabled_extensions=("html", "xml"), default_for_string=True),
@@ -22,6 +23,7 @@ async def _secure_html_to_pic(html: str, *, width: int) -> bytes:
     return await html_to_pic(
         html=inject_csp(html),
         viewport={"width": width, "height": 10},
+        extra_http_headers={"Referer": WMPVP_REFERER},
     )
 
 
