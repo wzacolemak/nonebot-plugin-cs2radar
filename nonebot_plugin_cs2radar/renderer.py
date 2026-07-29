@@ -48,6 +48,18 @@ def _pick_int(sources: list[Any], *aliases: str) -> int:
     return 0
 
 
+def _pick_float(sources: list[Any], *aliases: str) -> float | None:
+    for alias in aliases:
+        for source in sources:
+            value = _nested_value(source, alias)
+            if value not in (None, ""):
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    continue
+    return None
+
+
 def _build_highlight_summary(*sources: Any) -> dict[str, Any]:
     source_list = [source for source in sources if isinstance(source, dict)]
     kills_2 = _pick_int(source_list, "k2", "doubleKill", "double_kill", "twoKill", "two_kill", "multiKill2", "2k", "kill2", "2kill", "double_kill_total", "2_kill", "kill_2")
@@ -55,6 +67,17 @@ def _build_highlight_summary(*sources: Any) -> dict[str, Any]:
     kills_4 = _pick_int(source_list, "k4", "quadraKill", "fourKill", "four_kill", "multiKill4", "4k", "kill4", "4kill", "quadra_kill_total", "4_kill", "kill_4")
     kills_5 = _pick_int(source_list, "k5", "pentaKill", "fiveKill", "five_kill", "ace", "multiKill5", "5k", "kill5", "5kill", "penta_kill_total", "5_kill", "kill_5")
     first_kills = _pick_int(source_list, "firstKill", "firstKills", "first_kill", "entryKill", "entryKills", "firstBlood", "first_kill_total")
+    first_kill_ratio = _pick_float(source_list, "entryKillRatio", "firstKillRatio", "first_kill_ratio")
+    if first_kills > 0:
+        first_kill_label = "首杀"
+        first_kill_value: int | str = first_kills
+    elif first_kill_ratio is not None:
+        ratio_percent = first_kill_ratio * 100 if first_kill_ratio <= 1 else first_kill_ratio
+        first_kill_label = "首杀率"
+        first_kill_value = f"{ratio_percent:.1f}%"
+    else:
+        first_kill_label = "首杀"
+        first_kill_value = 0
     clutch_1v1 = _pick_int(source_list, "vs1", "clutch1", "clutch_1", "clutch1v1", "oneVOne", "v1_total", "1v1", "end_1v1")
     clutch_1v2 = _pick_int(source_list, "vs2", "clutch2", "clutch_2", "clutch1v2", "oneVTwo", "v2_total", "1v2", "end_1v2")
     clutch_1v3 = _pick_int(source_list, "vs3", "clutch3", "clutch_3", "clutch1v3", "oneVThree", "v3_total", "1v3", "end_1v3")
@@ -71,7 +94,7 @@ def _build_highlight_summary(*sources: Any) -> dict[str, Any]:
         "multi_kills": multi_kills,
         "clutch_wins": clutch_wins,
         "summary_cards": [
-            {"label": "首杀", "value": first_kills},
+            {"label": first_kill_label, "value": first_kill_value},
             {"label": "多杀", "value": multi_kills},
             {"label": "残局", "value": clutch_wins},
             {"label": "2K/3K/4K/5K", "value": f"{kills_2}/{kills_3}/{kills_4}/{kills_5}"},

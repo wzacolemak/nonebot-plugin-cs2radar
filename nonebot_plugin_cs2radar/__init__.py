@@ -69,6 +69,7 @@ __plugin_meta__ = PluginMetadata(
         "5e [ID/昵称]\n"
         "pw [ID/昵称]\n"
         "pwlogin [手机号] [验证码]\n"
+        "官匹 [SteamID64] [场次序号]\n"
         "bind [platform] [name]\n"
         "match [platform] [@群友] [round]"
     ),
@@ -95,6 +96,12 @@ pw_login = on_command(
     priority=plugin_config.priority,
     block=True,
     permission=SUPERUSER,
+)
+official_match = on_command(
+    "官匹",
+    aliases={"官匹查询", "mm"},
+    priority=plugin_config.priority,
+    block=True,
 )
 bind_cmd = on_command("bind", aliases={"绑定", "添加", "绑定用户", "添加用户"}, priority=plugin_config.priority, block=True)
 match_cmd = on_command("match", aliases={"战绩", "查询战绩"}, priority=plugin_config.priority, block=True)
@@ -277,6 +284,21 @@ def _build_match_view_data(match_data, llm_title: str, llm_detail: str) -> dict:
     }
 
 
+async def _render_match_image(match_data) -> bytes:
+    llm_title = "评价暂不可用"
+    llm_detail = "未配置或调用失败，本次仅展示战绩数据。"
+    try:
+        result = await llm.evaluate(match_data.llm_context())
+        if result:
+            llm_title = result.title
+            llm_detail = result.detail
+    except Exception as e:
+        logger.warning(f"[cs_pro] llm evaluate failed: {e}")
+
+    view_data = _build_match_view_data(match_data, llm_title, llm_detail)
+    return await render_match_detail_card(view_data)
+
+
 @bind_cmd.handle()
 @_guarded(bind_cmd, "bind")
 async def handle_bind(event: MessageEvent, args: Message = CommandArg()):
@@ -339,19 +361,40 @@ async def handle_match(bot: Bot, event: MessageEvent, args: Message = CommandArg
         logger.exception(f"[nonebot_plugin_cs2radar] match query failed: {e}")
         await match_cmd.finish("查询失败，请稍后重试。")
 
-    llm_title = "评价暂不可用"
-    llm_detail = "未配置或调用失败，本次仅展示战绩数据。"
-    try:
-        result = await llm.evaluate(match_data.llm_context())
-        if result:
-            llm_title = result.title
-            llm_detail = result.detail
-    except Exception as e:
-        logger.warning(f"[cs_pro] llm evaluate failed: {e}")
-
-    view_data = _build_match_view_data(match_data, llm_title, llm_detail)
-    image_bytes = await render_match_detail_card(view_data)
+    image_bytes = await _render_match_image(match_data)
     await match_cmd.finish(MessageSegment.image(image_bytes))
+
+
+@official_match.handle()
+@_guarded(official_match, "official_match")
+async def handle_official_match(args: Message = CommandArg()):
+    tokens = args.extract_plain_text().strip().split()
+    if not tokens or len(tokens) > 2:
+        await official_match.finish(
+            "用法: /官匹 <SteamID64> [场次序号]，例如: /官匹 76561198802966808"
+        )
+
+    steam_id = tokens[0]
+    if not re.fullmatch(r"7656119\d{10}", steam_id):
+        await official_match.finish("SteamID64 格式不正确，应为 7656119 开头的 17 位数字。")
+
+    round_index = 1
+    if len(tokens) == 2:
+        if not tokens[1].isdigit() or not 1 <= int(tokens[1]) <= 20:
+            await official_match.finish("场次序号应在 1 到 20 之间。")
+        round_index = int(tokens[1])
+
+    await official_match.send(f"正在查询该玩家倒数第 {round_index} 场官匹并生成战绩图...")
+    try:
+        match_data = await match_service.fetch_official_match_by_steam_id(steam_id, round_index)
+        image_bytes = await _render_match_image(match_data)
+    except ValueError as e:
+        await official_match.finish(f"官匹查询失败: {e}")
+    except Exception as e:
+        logger.exception(f"[nonebot_plugin_cs2radar] official match query failed: {e}")
+        await official_match.finish("官匹查询失败，请稍后重试。")
+
+    await official_match.finish(MessageSegment.image(image_bytes))
 
 
 @cs_search.handle()

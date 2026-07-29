@@ -274,6 +274,25 @@ class MatchService:
         raw = await self._get_pw_match_detail(match_id, ds, binding.uuid, match_item)
         return self._parse_pw_mm(raw, binding, p, match_id)
 
+    async def fetch_official_match_by_steam_id(self, steam_id: str, round_index: int = 1) -> MatchResult:
+        normalized = str(steam_id or "").strip()
+        if not re.fullmatch(r"7656119\d{10}", normalized):
+            raise ValueError("SteamID64 格式不正确，应为 7656119 开头的 17 位数字")
+        if round_index < 1 or round_index > 20:
+            raise ValueError("场次序号应在 1 到 20 之间")
+
+        binding = UserBinding(
+            qq_id="",
+            platform="mm",
+            player_name=normalized,
+            domain="",
+            uuid=normalized,
+            updated_at=0,
+        )
+        match_id, match_item = await self._get_pw_match_entry(normalized, round_index, 1)
+        raw = await self._get_pw_match_detail(match_id, 1, normalized, match_item)
+        return self._parse_pw_mm(raw, binding, "mm", match_id)
+
     async def _bind_5e(self, player_name: str) -> tuple[str, str, str]:
         headers = {
             "User-Agent": "Mozilla/5.0",

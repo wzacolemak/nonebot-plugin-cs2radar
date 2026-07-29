@@ -1,16 +1,16 @@
 import json
 import os
+from collections import defaultdict
 
 import pytest
 
-from nonebot_plugin_cs2radar import renderer
-from nonebot_plugin_cs2radar import llm, plugin_config
+from nonebot_plugin_cs2radar import llm, plugin_config, renderer
 from nonebot_plugin_cs2radar.binding_store import BindingStore
 from nonebot_plugin_cs2radar.config import Config
 from nonebot_plugin_cs2radar.crawler import PWCrawler, _route_5e_requests
 from nonebot_plugin_cs2radar.llm import LLMEvaluator
 from nonebot_plugin_cs2radar.match_service import MatchService, PlayerStats
-from nonebot_plugin_cs2radar.renderer import env
+from nonebot_plugin_cs2radar.renderer import _build_highlight_summary, env
 from nonebot_plugin_cs2radar.security import (
     CommandGuard,
     GuardRejected,
@@ -105,6 +105,35 @@ async def test_renderer_sets_wmpvp_referer(monkeypatch) -> None:
     }
 
 
+def test_pw_highlight_uses_entry_kill_ratio_when_count_is_missing() -> None:
+    combat = _build_highlight_summary({"entryKillRatio": 0.15})
+    assert combat["summary_cards"][0] == {"label": "首杀率", "value": "15.0%"}
+
+
+def test_pw_recent_match_renders_start_time() -> None:
+    stats = defaultdict(lambda: None)
+    html = env.get_template("pw_stats.html").render(
+        player={
+            "summary": {"nickname": "player", "steamId": "76561198802966808"},
+            "stats": stats,
+            "recent_matches": [
+                {
+                    "team": 1,
+                    "winTeam": 1,
+                    "score1": 13,
+                    "score2": 9,
+                    "mapName": "Mirage",
+                    "mode": "天梯",
+                    "startTime": "2026-07-29 21:49:18",
+                }
+            ],
+        },
+        combat={"summary_cards": [], "clutch_cards": []},
+        now="now",
+    )
+    assert "2026-07-29 21:49:18" in html
+
+
 def test_pw_session_is_memory_only_by_default(tmp_path) -> None:
     crawler = PWCrawler(persist_session=False)
     crawler.session_file = tmp_path / "pw_session.json"
@@ -154,6 +183,41 @@ def test_match_service_uses_memory_session_provider() -> None:
         "my_steam_id": 76561198000000000,
         "appversion": "test-version",
     }
+
+
+@pytest.mark.asyncio
+async def test_official_match_can_be_queried_directly_by_steam_id(monkeypatch) -> None:
+    service = MatchService()
+    expected = object()
+
+    async def fake_entry(steam_id, round_index, data_source):
+        assert (steam_id, round_index, data_source) == ("76561198802966808", 2, 1)
+        return "match-id", {"startTime": "2026-07-29 21:49:18"}
+
+    async def fake_detail(match_id, data_source, steam_id, match_item):
+        assert (match_id, data_source, steam_id) == (
+            "match-id",
+            1,
+            "76561198802966808",
+        )
+        assert match_item["startTime"] == "2026-07-29 21:49:18"
+        return {"base": {}, "players": []}
+
+    def fake_parse(raw, binding, platform, match_id):
+        assert binding.uuid == "76561198802966808"
+        assert platform == "mm"
+        assert match_id == "match-id"
+        return expected
+
+    monkeypatch.setattr(service, "_get_pw_match_entry", fake_entry)
+    monkeypatch.setattr(service, "_get_pw_match_detail", fake_detail)
+    monkeypatch.setattr(service, "_parse_pw_mm", fake_parse)
+
+    result = await service.fetch_official_match_by_steam_id("76561198802966808", 2)
+    assert result is expected
+
+    with pytest.raises(ValueError, match="SteamID64"):
+        await service.fetch_official_match_by_steam_id("123")
 
 
 def test_legacy_config_is_ignored_without_explicit_opt_in() -> None:

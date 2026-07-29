@@ -226,6 +226,7 @@
         .m-info { display: flex; flex-direction: column; }
         .m-map { font-weight: 700; font-size: 14px; color: #fff; }
         .m-score { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+        .m-time { font-size: 11px; color: var(--text-dim); margin-top: 3px; }
         .m-stats { display: flex; gap: 18px; }
         .m-stat { display: flex; flex-direction: column; align-items: flex-end; }
         .m-val { font-weight: 700; font-size: 15px; color: var(--accent-color); }
@@ -326,7 +327,11 @@
                 <div class="match-card {{ res_class }}">
                     <div class="match-left">
                         <div class="res-tag">{{ '胜' if is_win else ('平' if is_tie else '负') }}</div>
-                        <div class="m-info"><span class="m-map">{{ match.mapName }}</span><span class="m-score">{{ match.score1 }} : {{ match.score2 }} · {{ match.mode or '' }}</span></div>
+                        <div class="m-info">
+                            <span class="m-map">{{ match.mapName }}</span>
+                            <span class="m-score">{{ match.score1 }} : {{ match.score2 }} · {{ match.mode or '' }}</span>
+                            {% if match.startTime %}<span class="m-time">{{ match.startTime }}</span>{% endif %}
+                        </div>
                     </div>
                     <div class="m-stats">
                         <div class="m-stat"><span class="m-val">{{ '%.2f' % ((match.pwRating if match.pwRating is not none else match.rating) or 0) }}</span><span class="m-lab">Rating</span></div>
