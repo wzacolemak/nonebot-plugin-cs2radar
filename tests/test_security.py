@@ -1,10 +1,11 @@
+import inspect
 import json
 import os
 from collections import defaultdict
 
 import pytest
 
-from nonebot_plugin_cs2radar import llm, plugin_config, renderer
+from nonebot_plugin_cs2radar import handle_official_match, llm, plugin_config, renderer
 from nonebot_plugin_cs2radar.binding_store import BindingStore
 from nonebot_plugin_cs2radar.config import Config
 from nonebot_plugin_cs2radar.crawler import PWCrawler, _route_5e_requests
@@ -132,6 +133,10 @@ def test_pw_recent_match_renders_start_time() -> None:
         now="now",
     )
     assert "2026-07-29 21:49:18" in html
+
+
+def test_official_match_handler_receives_event_context() -> None:
+    assert "event" in inspect.signature(handle_official_match).parameters
 
 
 def test_pw_session_is_memory_only_by_default(tmp_path) -> None:

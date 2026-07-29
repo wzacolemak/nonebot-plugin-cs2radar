@@ -367,7 +367,7 @@ async def handle_match(bot: Bot, event: MessageEvent, args: Message = CommandArg
 
 @official_match.handle()
 @_guarded(official_match, "official_match")
-async def handle_official_match(args: Message = CommandArg()):
+async def handle_official_match(event: MessageEvent, args: Message = CommandArg()):
     tokens = args.extract_plain_text().strip().split()
     if not tokens or len(tokens) > 2:
         await official_match.finish(
