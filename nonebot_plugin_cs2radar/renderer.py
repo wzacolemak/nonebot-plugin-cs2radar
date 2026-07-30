@@ -201,6 +201,152 @@ async def render_pw_stats_card(player_data: dict) -> bytes:
     return await _secure_html_to_pic(html_content, width=640)
 
 
+def _official_history_to_pw_card_data(
+    matches: list[Any], profile: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Aggregate recent official matches into the same view model used by /pw."""
+    if not matches:
+        raise ValueError("官匹历史战绩为空")
+
+    profile = profile or {}
+    profile_summary = profile.get("summary", {}) if isinstance(profile, dict) else {}
+    players = [match.player for match in matches]
+    count = len(matches)
+    wins = sum(match.result_text == "胜利" for match in matches)
+    draws = sum(match.result_text == "平局" for match in matches)
+    losses = count - wins - draws
+    total_kills = sum(player.kill for player in players)
+    total_deaths = sum(player.death for player in players)
+
+    def average(attribute: str) -> float:
+        return sum(float(getattr(player, attribute, 0) or 0) for player in players) / count
+
+    highlight_names = (
+        "first_kills",
+        "multi_kills",
+        "clutch_wins",
+        "kills_2",
+        "kills_3",
+        "kills_4",
+        "kills_5",
+        "clutch_1v1",
+        "clutch_1v2",
+        "clutch_1v3",
+        "clutch_1v4",
+        "clutch_1v5",
+    )
+    highlights = {
+        name: sum(int(getattr(player.highlights, name, 0) or 0) for player in players)
+        for name in highlight_names
+    }
+
+    map_stats: dict[str, dict[str, Any]] = {}
+    for match in matches:
+        item = map_stats.setdefault(
+            match.map_name,
+            {"mapName": match.map_name, "winCount": 0, "totalMatch": 0},
+        )
+        item["totalMatch"] += 1
+        if match.result_text == "胜利":
+            item["winCount"] += 1
+    hot_maps = sorted(
+        map_stats.values(),
+        key=lambda item: (item["totalMatch"], item["winCount"]),
+        reverse=True,
+    )
+
+    recent_matches = []
+    for match in matches:
+        if match.result_text == "胜利":
+            team, win_team = 1, 1
+        elif match.result_text == "失败":
+            team, win_team = 1, 2
+        else:
+            team, win_team = 1, 0
+        recent_matches.append(
+            {
+                "team": team,
+                "winTeam": win_team,
+                "score1": match.score_our,
+                "score2": match.score_enemy,
+                "mapName": match.map_name,
+                "mode": match.match_type,
+                "startTime": datetime.fromtimestamp(match.start_time).strftime("%Y-%m-%d %H:%M:%S"),
+                "pwRating": match.player.rating,
+                "rating": match.player.rating,
+                "kill": match.player.kill,
+                "death": match.player.death,
+                "we": match.player.rws,
+            }
+        )
+
+    average_rating = average("rating")
+    average_adr = average("adr")
+    average_rws = average("rws")
+    steam_id = str(profile_summary.get("steamId") or players[0].uuid or "未知")
+    nickname = str(profile_summary.get("nickname") or players[0].name or steam_id)
+    return {
+        "platform_label": "官匹",
+        "summary": {
+            "nickname": nickname,
+            "avatarUrl": profile_summary.get("avatarUrl") or "",
+            "steamId": steam_id,
+            "description": f"最近 {count} 场：{wins} 胜 {draws} 平 {losses} 负",
+            "rankItems": [
+                {"label": "最近场次", "value": count},
+                {"label": "胜 / 平 / 负", "value": f"{wins}/{draws}/{losses}"},
+                {"label": "平均 Rating", "value": f"{average_rating:.2f}"},
+            ],
+            "statsDescription": (
+                f"场均击杀 {total_kills / count:.1f} / 场均死亡 {total_deaths / count:.1f} / "
+                f"平均 ADR {average_adr:.1f} / 平均 RWS {average_rws:.2f}"
+            ),
+            "recentTitle": f"最近 {count} 场官匹",
+        },
+        "stats": {
+            "seasonId": "官匹历史",
+            "pvpRank": 0,
+            "pvpScore": 0,
+            "winRate": wins / count,
+            "pwRating": average_rating,
+            "rating": average_rating,
+            "adr": average_adr,
+            "rws": average_rws,
+            "mvpCount": 0,
+            "kd": total_kills / total_deaths if total_deaths else total_kills,
+            "headShotRatio": average("headshot_rate"),
+            "cnt": count,
+            "avgWe": average_rws,
+            "kills": total_kills,
+            "assists": 0,
+            "deaths": total_deaths,
+            "entryKillRatio": highlights["first_kills"] / max(total_kills, 1),
+            "firstKill": highlights["first_kills"],
+            "multiKill": highlights["multi_kills"],
+            "clutchWin": highlights["clutch_wins"],
+            "k2": highlights["kills_2"],
+            "k3": highlights["kills_3"],
+            "k4": highlights["kills_4"],
+            "k5": highlights["kills_5"],
+            "vs1": highlights["clutch_1v1"],
+            "vs2": highlights["clutch_1v2"],
+            "vs3": highlights["clutch_1v3"],
+            "vs4": highlights["clutch_1v4"],
+            "vs5": highlights["clutch_1v5"],
+            "hotMaps": hot_maps,
+            "hotWeapons": [],
+            "hotWeapons2": [],
+        },
+        "recent_matches": recent_matches,
+    }
+
+
+async def render_official_history_card(
+    matches: list[Any], profile: dict[str, Any] | None = None
+) -> bytes:
+    return await render_pw_stats_card(_official_history_to_pw_card_data(matches, profile))
+
+
 async def render_match_detail_card(view_data: dict) -> bytes:
     template = env.get_template("match_detail.html")
     html_content = template.render(

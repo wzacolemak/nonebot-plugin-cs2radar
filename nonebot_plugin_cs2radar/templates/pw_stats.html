@@ -120,6 +120,7 @@
         .combat-grid { grid-template-columns: repeat(4, 1fr); margin-bottom: 22px; }
         .clutch-grid { grid-template-columns: repeat(5, 1fr); margin-bottom: 22px; }
         .hot-container { grid-template-columns: 1fr 1fr; margin-bottom: 22px; }
+        .hot-container.single { grid-template-columns: 1fr; }
         .card {
             padding: 14px 10px;
             text-align: center;
@@ -227,10 +228,37 @@
         .m-map { font-weight: 700; font-size: 14px; color: #fff; }
         .m-score { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
         .m-time { font-size: 11px; color: var(--text-dim); margin-top: 3px; }
-        .m-stats { display: flex; gap: 18px; }
-        .m-stat { display: flex; flex-direction: column; align-items: flex-end; }
-        .m-val { font-weight: 700; font-size: 15px; color: var(--accent-color); }
-        .m-lab { font-size: 10px; color: var(--text-dim); text-transform: uppercase; margin-top: 2px; }
+        .m-stats {
+            display: grid;
+            grid-template-columns: 5ch 5ch 5ch;
+            column-gap: 12px;
+            justify-items: end;
+            align-items: center;
+        }
+        .m-stat {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+        }
+        .m-val {
+            width: 100%;
+            font-weight: 700;
+            font-size: 15px;
+            color: var(--accent-color);
+            text-align: right;
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+            font-feature-settings: "tnum" 1;
+        }
+        .m-lab {
+            width: 100%;
+            font-size: 10px;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            text-align: right;
+            margin-top: 2px;
+        }
         .footer {
             margin-top: 24px;
             padding-top: 18px;
@@ -243,7 +271,7 @@
 </head>
 <body>
     <div class="container">
-        <div class="platform-badge">完美世界平台</div>
+        <div class="platform-badge">{{ player.platform_label or '完美世界平台' }}</div>
         <div class="header">
             <img src="{{ (player.summary.avatarUrl or 'https://www.csgo.com.cn/images/header/logo.png') | safe_image_url('https://www.csgo.com.cn/images/header/logo.png') }}" class="avatar" alt="Avatar">
             <div class="user-info">
@@ -255,9 +283,15 @@
             </div>
         </div>
         <div class="rank-section">
+            {% if player.summary.rankItems %}
+            {% for item in player.summary.rankItems %}
+            <div class="rank-item"><span class="rank-label">{{ item.label }}</span><span class="rank-value">{{ item.value }}</span></div>
+            {% endfor %}
+            {% else %}
             <div class="rank-item"><span class="rank-label">天梯排名</span><span class="rank-value">{{ '#' + player.stats.pvpRank|string if player.stats.pvpRank and player.stats.pvpRank > 0 else '---' }}</span></div>
             <div class="rank-item"><span class="rank-label">天梯分数</span><span class="rank-value">{{ player.stats.pvpScore or '0' }}</span></div>
             <div class="rank-item"><span class="rank-label">胜率</span><span class="rank-value">{{ '%.1f' % (player.stats.winRate * 100) if player.stats.winRate and player.stats.winRate < 1 else (player.stats.winRate or '0.0') }}%</span></div>
+            {% endif %}
         </div>
         <div class="section-title">基础数据</div>
         <div class="stats-grid">
@@ -281,13 +315,23 @@
         <div class="section-title">补充描述</div>
         <div class="summary-panel">
             <div class="text">
+                {% if player.summary.statsDescription %}
+                {{ player.summary.statsDescription }}
+                {% else %}
                 致胜 {{ '%.2f' % (player.stats.victory or 0) }} / 枪法 {{ '%.2f' % (player.stats.shot or 0) }} / 道具 {{ '%.2f' % (player.stats.prop or 0) }} / 狙击 {{ '%.2f' % (player.stats.snipe or 0) }} / 突破 {{ '%.2f' % (player.stats.breach or 0) }}
                 {% if player.stats.endingWin is not none %}
                 <br>残局胜利 {{ player.stats.endingWin or 0 }} 次，标题评价：{{ player.summary.description or '暂无' }}
                 {% endif %}
+                {% endif %}
             </div>
         </div>
-        <div class="hot-container">
+        {% if player.summary.matchReview %}
+        <div class="section-title">本场评价</div>
+        <div class="summary-panel">
+            <div class="text">{{ player.summary.matchReview }}</div>
+        </div>
+        {% endif %}
+        <div class="hot-container {{ 'single' if player.platform_label == '官匹' else '' }}">
             <div>
                 <div class="section-title">常用地图</div>
                 <div class="hot-list">
@@ -300,6 +344,7 @@
                     {% endfor %}
                 </div>
             </div>
+            {% if player.platform_label != '官匹' %}
             <div>
                 <div class="section-title">常用武器</div>
                 <div class="hot-list">
@@ -315,10 +360,11 @@
                     {% endfor %}
                 </div>
             </div>
+            {% endif %}
         </div>
         {% if player.recent_matches %}
         <div class="recent-matches">
-            <div class="section-title">最近 5 场比赛</div>
+            <div class="section-title">{{ player.summary.recentTitle or '最近 5 场比赛' }}</div>
             <div class="match-list">
                 {% for match in player.recent_matches %}
                 {% set is_win = (match.team == match.winTeam) %}

@@ -1,20 +1,44 @@
-# nonebot-plugin-cs2radar
+# nonebot-plugin-cs2radar-enhanced
 
-NoneBot2 的 CS2 插件，提供职业选手查询、近期赛事/赛果、5E 战绩、完美平台战绩、官匹战绩、账号绑定与单局详细复盘。
+基于 [luojisama/nonebot-plugin-cs2radar](https://github.com/luojisama/nonebot-plugin-cs2radar)
+维护的增强版 NoneBot2 CS2 插件，提供职业选手查询、近期赛事/赛果、5E 战绩、完美平台战绩、
+官匹战绩、账号绑定与单局详细复盘。
+
+本仓库保留原项目 MIT License、原作者信息和上游链接；增强内容由 fork 维护者持续集成。
+
+## 本 fork 的主要改动
+
+### 完美与官匹查询
+
+- `/pw` 支持完美昵称、SteamID64、Steam 自定义ID以及完整 Steam 个人主页链接。
+- `/pw <玩家> [场数]` 可指定最近 `1–10` 场，默认显示 5 场；上半部分仍为当前赛季汇总。
+- 修复昵称模糊搜索将参数误匹配为其他玩家的问题，并自动还原昵称中的 HTML 实体。
+- `/官匹 <玩家> [场数]` 支持 SteamID64、Steam 自定义ID和 Steam 个人主页链接。
+- `/官匹` 默认汇总最近 5 场，可指定 `1–10` 场，并使用与 `/pw` 一致的统计卡片 UI。
+- 官匹卡片额外获取公开玩家资料以补充昵称和头像。
+- 官匹接口不提供可靠的赛季武器统计，因此官匹卡片隐藏“常用武器”板块，地图统计自动占满整行。
+
+### 图片与数据展示
+
+- 最近比赛列表中的 Rating、K/D、WE 使用固定列宽和等宽数字，保证纵向对齐。
+- 汇总最近官匹的胜负、平均 Rating、ADR、RWS、总击杀/死亡、高光及地图数据。
+- 保留原有单场详细战绩、队伍数据、回合走势和 LLM 复盘卡片。
+
+### 安全与稳定性
+
+- 沿用并扩展 hardening 分支中的凭据保护、CSP、图片域名校验、命令并发限制和隐私控制。
+- 完美平台 Session 推荐通过服务器环境变量提供，QQ 内登录默认关闭且仅允许超级用户私聊。
+- 官匹/完美查询复用受保护的 Session，不在图片、消息或日志中展示 Token。
 
 ## 安装
 
-### 使用 nb-cli
+### 安装增强版（推荐）
 
-```bash
-nb plugin install nonebot-plugin-cs2radar
+```shell
+pip install "nonebot-plugin-cs2radar @ git+https://github.com/wzacolemak/nonebot-plugin-cs2radar-enhanced.git"
 ```
 
-### 使用 pip
-
-```bash
-pip install nonebot-plugin-cs2radar
-```
+> PyPI 上的 `nonebot-plugin-cs2radar` 可能仍指向上游发布版本；需要本 fork 的增强功能时请使用上述 Git 地址。
 
 ### 安装 Playwright 浏览器
 
@@ -35,7 +59,8 @@ playwright install chromium
 - `赛果`: 查询近几日赛果
 - `5e <ID/昵称>`: 查询 5E 战绩
 - `pwlogin <手机号> <验证码>`: 可选的应急登录命令，仅限超级用户私聊且默认关闭
-- `pw <昵称/SteamID>`: 查询完美平台战绩
+- `pw <昵称/SteamID/Steam自定义ID> [场数]`: 查询完美当前赛季统计与最近 1–10 场
+- `官匹 <SteamID/Steam自定义ID> [场数]`: 汇总最近 1–10 场官匹，默认 5 场
 - `bind <5e|pw> <玩家名>`: 绑定常用查询对象
 - `match [5e|pw|mm] [@群友] [局数]`: 查询最近第 N 把详细对局并生成复盘
 

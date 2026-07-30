@@ -573,13 +573,19 @@ class PWCrawler:
                 resp.raise_for_status()
                 data = resp.json()
                 if data.get("code") == 1:
-                    return data.get("result", [])
+                    return data.get("result") or []
                 return []
             except Exception as e:
                 logger.error(f"Error searching PW player: {e}")
                 return []
 
-    async def get_player_data(self, target_steam_id: str) -> dict[str, Any]:
+    async def get_player_data(
+        self,
+        target_steam_id: str,
+        *,
+        include_recent_matches: bool = True,
+        recent_match_count: int = 5,
+    ) -> dict[str, Any]:
         """获取玩家详细战绩"""
         if not self._require_session():
             return {"error": "请先使用 pwlogin 登录完美平台后再查询。"}
@@ -610,7 +616,11 @@ class PWCrawler:
                         return {"error": "API 返回数据为空，请检查玩家是否在该赛季有战绩"}
                         
                     # Fetch recent matches
-                    recent_matches = await self.get_recent_matches(target_steam_id)
+                    recent_matches = (
+                        await self.get_recent_matches(target_steam_id, recent_match_count)
+                        if include_recent_matches
+                        else []
+                    )
                     
                     return {
                         "summary": {

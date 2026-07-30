@@ -1,7 +1,10 @@
+import asyncio
+import html
 import re
 from datetime import datetime
 from functools import wraps
 from typing import Any
+from urllib.parse import quote, urlsplit
 
 import httpx
 from nonebot import get_plugin_config, logger, on_command, require
@@ -23,6 +26,7 @@ from .renderer import (
     render_events_card,
     render_match_detail_card,
     render_matches_card,
+    render_official_history_card,
     render_player_detail,
     render_pw_stats_card,
     render_results_card,
@@ -31,7 +35,7 @@ from .renderer import (
 from .security import CommandGuard, GuardRejected
 from .storage import get_bind_db_path
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 plugin_config = get_plugin_config(Config)
 
@@ -67,18 +71,18 @@ __plugin_meta__ = PluginMetadata(
         "cs赛事\n"
         "赛果\n"
         "5e [ID/昵称]\n"
-        "pw [ID/昵称]\n"
+        "pw [ID/昵称/Steam自定义ID] [场数，默认5]\n"
         "pwlogin [手机号] [验证码]\n"
-        "官匹 [SteamID64] [场次序号]\n"
+        "官匹 [SteamID64/自定义ID] [场数，默认5]\n"
         "bind [platform] [name]\n"
         "match [platform] [@群友] [round]"
     ),
     type="application",
-    homepage="https://github.com/luojisama/nonebot-plugin-cs2radar",
+    homepage="https://github.com/wzacolemak/nonebot-plugin-cs2radar-enhanced",
     config=Config,
     supported_adapters={"~onebot.v11"},
     extra={
-        "author": "luojisama",
+        "author": "luojisama / wzacolemak",
         "version": __version__,
         "pypi": "nonebot-plugin-cs2radar",
     },
@@ -191,6 +195,37 @@ def _platform_theme(platform: str) -> tuple[str, str, str]:
 
 def _fmt_pct(v: float) -> str:
     return f"{v * 100:.1f}%"
+
+
+async def _resolve_steam_id64(raw: str) -> str:
+    value = str(raw or "").strip()
+    if re.fullmatch(r"7656119\d{10}", value):
+        return value
+
+    identifier = value
+    if value.startswith(("http://", "https://")):
+        parsed = urlsplit(value)
+        if parsed.hostname not in {"steamcommunity.com", "www.steamcommunity.com"}:
+            raise ValueError("仅支持 Steam Community 个人主页链接。")
+        profile_match = re.fullmatch(r"/profiles/(7656119\d{10})/?", parsed.path)
+        if profile_match:
+            return profile_match.group(1)
+        vanity_match = re.fullmatch(r"/id/([^/]+)/?", parsed.path)
+        if not vanity_match:
+            raise ValueError("Steam 个人主页链接格式不正确。")
+        identifier = vanity_match.group(1)
+
+    if not re.fullmatch(r"[A-Za-z0-9_-]{2,64}", identifier):
+        raise ValueError("请输入 SteamID64、自定义ID或 Steam 个人主页链接。")
+
+    url = f"https://steamid.io/lookup/{quote(identifier, safe='')}"
+    async with httpx.AsyncClient(timeout=plugin_config.http_timeout, follow_redirects=True) as client:
+        response = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+        response.raise_for_status()
+    match = re.search(r"7656119\d{10}", response.text)
+    if not match:
+        raise ValueError(f"无法解析 Steam 自定义ID：{identifier}")
+    return match.group(0)
 
 
 def _build_match_view_data(match_data, llm_title: str, llm_detail: str) -> dict:
@@ -371,23 +406,29 @@ async def handle_official_match(event: MessageEvent, args: Message = CommandArg(
     tokens = args.extract_plain_text().strip().split()
     if not tokens or len(tokens) > 2:
         await official_match.finish(
-            "用法: /官匹 <SteamID64> [场次序号]，例如: /官匹 76561198802966808"
+            "用法: /官匹 <SteamID64/自定义ID> [场数]，例如: /官匹 colemakQWQ"
         )
 
-    steam_id = tokens[0]
-    if not re.fullmatch(r"7656119\d{10}", steam_id):
-        await official_match.finish("SteamID64 格式不正确，应为 7656119 开头的 17 位数字。")
-
-    round_index = 1
-    if len(tokens) == 2:
-        if not tokens[1].isdigit() or not 1 <= int(tokens[1]) <= 20:
-            await official_match.finish("场次序号应在 1 到 20 之间。")
-        round_index = int(tokens[1])
-
-    await official_match.send(f"正在查询该玩家倒数第 {round_index} 场官匹并生成战绩图...")
     try:
-        match_data = await match_service.fetch_official_match_by_steam_id(steam_id, round_index)
-        image_bytes = await _render_match_image(match_data)
+        steam_id = await _resolve_steam_id64(tokens[0])
+    except Exception as e:
+        await official_match.finish(f"Steam 账号解析失败: {e}")
+
+    match_count = 5
+    if len(tokens) == 2:
+        if not tokens[1].isdigit() or not 1 <= int(tokens[1]) <= 10:
+            await official_match.finish("查询场数应在 1 到 10 之间。")
+        match_count = int(tokens[1])
+
+    await official_match.send(f"正在查询该玩家最近 {match_count} 场官匹并生成战绩图...")
+    try:
+        matches, profile = await asyncio.gather(
+            match_service.fetch_official_recent_matches(steam_id, match_count),
+            pw_crawler.get_player_data(steam_id, include_recent_matches=False),
+        )
+        if not isinstance(profile, dict) or "error" in profile:
+            profile = {}
+        image_bytes = await render_official_history_card(matches, profile)
     except ValueError as e:
         await official_match.finish(f"官匹查询失败: {e}")
     except Exception as e:
@@ -556,15 +597,23 @@ async def handle_pw_login(event: MessageEvent, arg: Message = CommandArg()):
 @pw_stats.handle()
 @_guarded(pw_stats, "pw_stats")
 async def handle_pw_stats(event: MessageEvent, arg: Message = CommandArg()):
-    input_str = arg.extract_plain_text().strip()
-    if not input_str:
+    raw_input = arg.extract_plain_text().strip()
+    if not raw_input:
         await pw_stats.finish("请输入完美平台玩家昵称或 SteamId，例如: /pw sh1ro")
+    input_str = raw_input
+    match_count = 5
+    input_parts = raw_input.rsplit(maxsplit=1)
+    if len(input_parts) == 2 and input_parts[1].isdigit():
+        if not 1 <= int(input_parts[1]) <= 10:
+            await pw_stats.finish("查询场数应在 1 到 10 之间。")
+        input_str = input_parts[0].strip()
+        match_count = int(input_parts[1])
     if len(input_str) > 64:
         await pw_stats.finish("玩家标识过长。")
     if not pw_crawler.has_session():
         await pw_stats.finish("请先使用 /pwlogin <手机号> <验证码> 登录完美平台后再查询。")
 
-    await pw_stats.send(f"正在查询完美玩家 {input_str}...")
+    await pw_stats.send(f"正在查询完美玩家 {input_str} 的赛季数据和最近 {match_count} 场...")
 
     try:
         is_steam_id = input_str.isdigit() and len(input_str) > 10
@@ -573,13 +622,37 @@ async def handle_pw_stats(event: MessageEvent, arg: Message = CommandArg()):
 
         if not is_steam_id:
             search_results = await pw_crawler.search_player(input_str)
-            if not search_results:
-                await pw_stats.finish(f"未找到昵称为 {input_str} 的玩家。")
-            search_info = search_results[0]
-            target_steam_id = str(search_info["steamId"])
-            await pw_stats.send(f"匹配到玩家: {search_info.get('pvpNickName', '未知')}，正在获取详细战绩...")
+            input_key = html.unescape(input_str).strip().casefold()
+            exact_match = next(
+                (
+                    item
+                    for item in search_results
+                    if html.unescape(str(item.get("pvpNickName") or "")).strip().casefold() == input_key
+                ),
+                None,
+            )
+            if exact_match:
+                search_info = exact_match
+                target_steam_id = str(search_info["steamId"])
+            else:
+                try:
+                    target_steam_id = await _resolve_steam_id64(input_str)
+                except Exception:
+                    if not search_results:
+                        await pw_stats.finish(f"未找到昵称或 Steam 自定义ID为 {input_str} 的玩家。")
+                    search_info = search_results[0]
+                    target_steam_id = str(search_info["steamId"])
 
-        data = await pw_crawler.get_player_data(target_steam_id)
+            if search_info:
+                matched_name = html.unescape(str(search_info.get("pvpNickName") or "未知"))
+                await pw_stats.send(f"匹配到玩家: {matched_name}，正在获取详细战绩...")
+            else:
+                await pw_stats.send(f"已解析 Steam 自定义ID: {target_steam_id}，正在获取详细战绩...")
+
+        data = await pw_crawler.get_player_data(
+            target_steam_id,
+            recent_match_count=match_count,
+        )
         if "error" in data:
             logger.warning(f"[nonebot_plugin_cs2radar] PW API returned an error: {data['error']}")
             await pw_stats.finish("查询完美战绩失败，请稍后重试。")
@@ -587,9 +660,15 @@ async def handle_pw_stats(event: MessageEvent, arg: Message = CommandArg()):
             await pw_stats.finish(f"未找到玩家 {target_steam_id} 的有效战绩数据。")
 
         if not data.get("summary", {}).get("nickname"):
-            data["summary"]["nickname"] = search_info.get("pvpNickName", "Unknown")
+            data["summary"]["nickname"] = html.unescape(
+                str(search_info.get("pvpNickName") or "Unknown")
+            )
+        else:
+            data["summary"]["nickname"] = html.unescape(str(data["summary"]["nickname"]))
         if not data.get("summary", {}).get("avatarUrl"):
             data["summary"]["avatarUrl"] = search_info.get("pvpAvatar")
+        actual_count = len(data.get("recent_matches") or [])
+        data["summary"]["recentTitle"] = f"最近 {actual_count} 场比赛"
 
         image_bytes = await render_pw_stats_card(data)
         await pw_stats.finish(MessageSegment.image(image_bytes))
@@ -598,4 +677,3 @@ async def handle_pw_stats(event: MessageEvent, arg: Message = CommandArg()):
     except Exception as e:
         logger.error(f"Error in pw_stats: {e}")
         await pw_stats.finish("完美战绩查询失败，请稍后重试。")
-

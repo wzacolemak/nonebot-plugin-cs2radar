@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import re
 from collections.abc import Callable
@@ -293,6 +294,39 @@ class MatchService:
         raw = await self._get_pw_match_detail(match_id, 1, normalized, match_item)
         return self._parse_pw_mm(raw, binding, "mm", match_id)
 
+    async def fetch_official_recent_matches(self, steam_id: str, count: int = 5) -> list[MatchResult]:
+        normalized = str(steam_id or "").strip()
+        if not re.fullmatch(r"7656119\d{10}", normalized):
+            raise ValueError("SteamID64 格式不正确，应为 7656119 开头的 17 位数字")
+        if count < 1 or count > 10:
+            raise ValueError("查询场数应在 1 到 10 之间")
+
+        binding = UserBinding(
+            qq_id="",
+            platform="mm",
+            player_name=normalized,
+            domain="",
+            uuid=normalized,
+            updated_at=0,
+        )
+        entries = await self._get_pw_match_entries(normalized, 1, count)
+        semaphore = asyncio.Semaphore(3)
+
+        async def fetch_one(match_item: dict[str, Any]) -> MatchResult:
+            match_id = str(match_item.get("matchId") or "")
+            if not match_id:
+                raise ValueError("match_id 解析失败")
+            async with semaphore:
+                raw = await self._get_pw_match_detail(match_id, 1, normalized, match_item)
+            return self._parse_pw_mm(raw, binding, "mm", match_id)
+
+        fetched = await asyncio.gather(*(fetch_one(item) for item in entries), return_exceptions=True)
+        matches = [item for item in fetched if isinstance(item, MatchResult)]
+        if not matches:
+            errors = [str(item) for item in fetched if isinstance(item, Exception)]
+            raise ValueError(errors[0] if errors else "未找到有效的官匹历史战绩")
+        return matches
+
     async def _bind_5e(self, player_name: str) -> tuple[str, str, str]:
         headers = {
             "User-Agent": "Mozilla/5.0",
@@ -419,6 +453,18 @@ class MatchService:
         return payload
 
     async def _get_pw_match_entry(self, steam_id: str, round_index: int, data_source: int) -> tuple[str, dict[str, Any]]:
+        items = await self._get_pw_match_entries(steam_id, data_source, 20)
+        if round_index <= 0 or round_index > len(items):
+            raise ValueError(f"未找到倒数第 {round_index} 把对局")
+        match_item = items[round_index - 1]
+        match_id = str(match_item.get("matchId") or "")
+        if not match_id:
+            raise ValueError("match_id 解析失败")
+        return match_id, match_item
+
+    async def _get_pw_match_entries(
+        self, steam_id: str, data_source: int, count: int
+    ) -> list[dict[str, Any]]:
         session = self._load_pw_session()
         self._require_pw_session(session)
         url = "https://api.wmpvp.com/api/csgo/home/match/list"
@@ -428,7 +474,7 @@ class MatchService:
             "mySteamId": int(session["my_steam_id"]),
             "dataSource": data_source,
             "page": 1,
-            "pageSize": 20,
+            "pageSize": max(1, min(count, 20)),
             "csgoSeasonId": "recent",
             "pvpType": -1,
         }
@@ -440,13 +486,9 @@ class MatchService:
         if data.get("statusCode") != 0:
             raise ValueError(data.get("errorMessage") or "完美/官匹对局列表获取失败")
         items = data.get("data", {}).get("matchList", [])
-        if not items or round_index <= 0 or round_index > len(items):
-            raise ValueError(f"未找到倒数第 {round_index} 把对局")
-        match_item = items[round_index - 1]
-        match_id = str(match_item.get("matchId") or "")
-        if not match_id:
-            raise ValueError("match_id 解析失败")
-        return match_id, match_item
+        if not items:
+            raise ValueError("未找到官匹/完美历史对局")
+        return [item for item in items[:count] if isinstance(item, dict)]
 
     async def _get_pw_match_detail(
         self,
